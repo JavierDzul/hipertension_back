@@ -1,96 +1,75 @@
-from flask import Blueprint, jsonify, request
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
-from app.extensions import db
-from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.notification_preference import NotificationPreference
-from app.utils.serializers import serialize_user, serialize_profile, serialize_notification_preferences
+# app/routes/auth_routes.py
 
-auth_bp = Blueprint("auth", __name__)
+from flask import Blueprint, request
+
+from app.schemas.auth_schema import (
+    validate_register_payload,
+    validate_login_payload,
+)
+from app.services.auth_service import (
+    register_user,
+    login_user,
+    AuthError,
+)
+from app.utils.responses import success_response, error_response
 
 
-@auth_bp.post("/auth/register")
+auth_bp = Blueprint("auth_bp", __name__, url_prefix="/api/auth")
+
+
+@auth_bp.post("/register")
 def register():
-    data = request.get_json() or {}
+    data = request.get_json()
 
-    email = (data.get("email") or "").strip().lower()
-    password = (data.get("password") or "").strip()
-    first_name = (data.get("first_name") or "").strip()
-    last_name = (data.get("last_name") or "").strip()
+    try:
+        payload = validate_register_payload(data)
+        result = register_user(payload)
 
-    if not email or not password or not first_name or not last_name:
-        return jsonify({"error": "email, password, first_name y last_name son obligatorios"}), 400
+        return success_response(
+            data=result,
+            message="Cuenta creada correctamente.",
+            status_code=201,
+        )
 
-    if User.query.filter_by(email=email).first():
-        return jsonify({"error": "Ese correo ya está registrado"}), 409
+    except ValueError as error:
+        return error_response(
+            message=str(error),
+            code="VALIDATION_ERROR",
+            status_code=400,
+        )
 
-    user = User(
-        email=email,
-        first_name=first_name,
-        last_name=last_name,
-    )
-    user.set_password(password)
-
-    db.session.add(user)
-    db.session.flush()
-
-    profile = UserProfile(
-        user_id=user.id,
-        diagnosis="Hipertensión Grado 1",
-        diagnosis_notes="Pendiente de completar por el usuario o médico.",
-    )
-    notifications = NotificationPreference(user_id=user.id)
-
-    db.session.add(profile)
-    db.session.add(notifications)
-    db.session.commit()
-
-    access_token = create_access_token(identity=str(user.id))
-
-    return jsonify({
-        "message": "Usuario registrado correctamente",
-        "access_token": access_token,
-        "user": serialize_user(user),
-    }), 201
+    except AuthError as error:
+        return error_response(
+            message=error.message,
+            code=error.code,
+            status_code=error.status_code,
+        )
 
 
-@auth_bp.post("/auth/login")
+@auth_bp.post("/login")
 def login():
-    data = request.get_json() or {}
+    data = request.get_json()
 
-    email = (data.get("email") or "").strip().lower()
-    password = (data.get("password") or "").strip()
+    try:
+        payload = validate_login_payload(data)
+        result = login_user(payload)
 
-    if not email or not password:
-        return jsonify({"error": "email y password son obligatorios"}), 400
+        return success_response(
+            data=result,
+            message="Inicio de sesión realizado correctamente.",
+            status_code=200,
+        )
 
-    user = User.query.filter_by(email=email).first()
+    except ValueError as error:
+        return error_response(
+            message=str(error),
+            code="VALIDATION_ERROR",
+            status_code=400,
+        )
 
-    if not user or not user.check_password(password):
-        return jsonify({"error": "Credenciales inválidas"}), 401
-
-    access_token = create_access_token(identity=str(user.id))
-
-    return jsonify({
-        "message": "Inicio de sesión correcto",
-        "access_token": access_token,
-        "user": serialize_user(user),
-    }), 200
-
-
-@auth_bp.get("/auth/me")
-@jwt_required()
-def me():
-    user_id = int(get_jwt_identity())
-    user = User.query.get(user_id)
-
-    if not user:
-        return jsonify({"error": "Usuario no encontrado"}), 404
-
-    return jsonify({
-        "user": serialize_user(user),
-        "profile": serialize_profile(user.profile) if user.profile else None,
-        "notifications": serialize_notification_preferences(user.notification_preferences)
-        if user.notification_preferences
-        else None,
-    }), 200
+    except AuthError as error:
+        return error_response(
+            message=error.message,
+            code=error.code,
+            status_code=error.status_code,
+        )

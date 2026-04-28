@@ -1,87 +1,196 @@
-from datetime import datetime
-from flask import Blueprint, jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
-from app.extensions import db
-from app.models.medication import Medication
-from app.utils.serializers import serialize_medication
+# app/routes/medication_routes.py
 
-medication_bp = Blueprint("medications", __name__)
+from flask import Blueprint, request
+from flask_jwt_extended import jwt_required, get_jwt_identity
+
+from app.schemas.medication_schema import (
+    validate_medication_payload,
+    validate_dose_log_payload,
+)
+from app.services.medication_service import (
+    get_user_medications,
+    get_user_medication,
+    create_medication,
+    update_medication,
+    delete_medication,
+    create_dose_log,
+    get_medication_dose_logs,
+    get_due_medications,
+    MedicationError,
+)
+from app.utils.responses import success_response, error_response
 
 
-@medication_bp.get("/medications")
+medication_bp = Blueprint("medication_bp", __name__, url_prefix="/api/medications")
+
+
+@medication_bp.post("")
 @jwt_required()
-def list_medications():
+def create_medication_route():
     user_id = int(get_jwt_identity())
-    medications = (
-        Medication.query.filter_by(user_id=user_id, is_active=True)
-        .order_by(Medication.time.asc(), Medication.id.asc())
-        .all()
+    data = request.get_json()
+
+    try:
+        payload = validate_medication_payload(data)
+        medication = create_medication(user_id, payload)
+
+        return success_response(
+            data=medication.to_dict(),
+            message="Medicamento registrado correctamente.",
+            status_code=201,
+        )
+
+    except ValueError as error:
+        return error_response(str(error))
+
+
+@medication_bp.get("")
+@jwt_required()
+def get_medications_route():
+    user_id = int(get_jwt_identity())
+
+    medications = get_user_medications(user_id)
+
+    return success_response(
+        data=[medication.to_dict() for medication in medications],
+        message="Medicamentos obtenidos correctamente.",
     )
 
-    return jsonify([serialize_medication(item) for item in medications]), 200
 
-
-@medication_bp.post("/medications")
+@medication_bp.get("/due")
 @jwt_required()
-def create_medication():
+def get_due_medications_route():
     user_id = int(get_jwt_identity())
-    data = request.get_json() or {}
 
-    name = (data.get("name") or "").strip()
-    dose = (data.get("dose") or "").strip()
-    time = (data.get("time") or "").strip()
-    frequency = (data.get("frequency") or "").strip()
-    notes = (data.get("notes") or "").strip()
+    due_medications = get_due_medications(user_id)
 
-    if not name or not dose or not time or not frequency:
-        return jsonify({"error": "name, dose, time y frequency son obligatorios"}), 400
-
-    medication = Medication(
-        user_id=user_id,
-        name=name,
-        dose=dose,
-        time=time,
-        frequency=frequency,
-        notes=notes or None,
+    return success_response(
+        data=due_medications,
+        message="Estado de tomas obtenido correctamente.",
     )
 
-    db.session.add(medication)
-    db.session.commit()
 
-    return jsonify({
-        "message": "Medicamento creado correctamente",
-        "medication": serialize_medication(medication),
-    }), 201
-
-
-@medication_bp.patch("/medications/<int:medication_id>/take")
+@medication_bp.get("/<int:medication_id>")
 @jwt_required()
-def mark_medication_taken(medication_id):
+def get_medication_route(medication_id: int):
     user_id = int(get_jwt_identity())
-    medication = Medication.query.filter_by(id=medication_id, user_id=user_id).first()
 
-    if not medication:
-        return jsonify({"error": "Medicamento no encontrado"}), 404
+    try:
+        medication = get_user_medication(user_id, medication_id)
 
-    medication.last_taken_at = datetime.utcnow()
-    db.session.commit()
+        return success_response(
+            data=medication.to_dict(),
+            message="Medicamento obtenido correctamente.",
+        )
 
-    return jsonify({
-        "message": "Medicamento marcado como tomado",
-        "medication": serialize_medication(medication),
-    }), 200
+    except MedicationError as error:
+        return error_response(
+            message=error.message,
+            code=error.code,
+            status_code=error.status_code,
+        )
 
 
-@medication_bp.delete("/medications/<int:medication_id>")
+@medication_bp.put("/<int:medication_id>")
 @jwt_required()
-def delete_medication(medication_id):
+def update_medication_route(medication_id: int):
     user_id = int(get_jwt_identity())
-    medication = Medication.query.filter_by(id=medication_id, user_id=user_id).first()
+    data = request.get_json()
 
-    if not medication:
-        return jsonify({"error": "Medicamento no encontrado"}), 404
+    try:
+        payload = validate_medication_payload(data, partial=True)
+        medication = update_medication(user_id, medication_id, payload)
 
-    medication.is_active = False
-    db.session.commit()
+        return success_response(
+            data=medication.to_dict(),
+            message="Medicamento actualizado correctamente.",
+        )
 
-    return jsonify({"message": "Medicamento desactivado correctamente"}), 200
+    except ValueError as error:
+        return error_response(str(error))
+
+    except MedicationError as error:
+        return error_response(
+            message=error.message,
+            code=error.code,
+            status_code=error.status_code,
+        )
+
+
+@medication_bp.delete("/<int:medication_id>")
+@jwt_required()
+def delete_medication_route(medication_id: int):
+    user_id = int(get_jwt_identity())
+
+    try:
+        delete_medication(user_id, medication_id)
+
+        return success_response(
+            data=None,
+            message="Medicamento eliminado correctamente.",
+        )
+
+    except MedicationError as error:
+        return error_response(
+            message=error.message,
+            code=error.code,
+            status_code=error.status_code,
+        )
+
+
+@medication_bp.post("/<int:medication_id>/dose-logs")
+@jwt_required()
+def create_dose_log_route(medication_id: int):
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+
+    try:
+        payload = validate_dose_log_payload(data)
+        dose_log = create_dose_log(user_id, medication_id, payload)
+
+        return success_response(
+            data=dose_log.to_dict(),
+            message="Registro de toma guardado correctamente.",
+            status_code=201,
+        )
+
+    except ValueError as error:
+        return error_response(str(error))
+
+    except MedicationError as error:
+        return error_response(
+            message=error.message,
+            code=error.code,
+            status_code=error.status_code,
+        )
+
+
+@medication_bp.get("/<int:medication_id>/dose-logs")
+@jwt_required()
+def get_dose_logs_route(medication_id: int):
+    user_id = int(get_jwt_identity())
+
+    limit = request.args.get("limit", 50)
+
+    try:
+        limit = int(limit)
+        dose_logs = get_medication_dose_logs(user_id, medication_id, limit)
+
+        return success_response(
+            data=[dose_log.to_dict() for dose_log in dose_logs],
+            message="Historial de tomas obtenido correctamente.",
+        )
+
+    except ValueError:
+        return error_response(
+            message="El límite debe ser un número entero.",
+            code="VALIDATION_ERROR",
+            status_code=400,
+        )
+
+    except MedicationError as error:
+        return error_response(
+            message=error.message,
+            code=error.code,
+            status_code=error.status_code,
+        )

@@ -1,9 +1,10 @@
-from app.models.disease import Disease
-from app.models.symptom import Symptom
-from app.models.risk_factor import RiskFactor
-from app.models.evaluation import Evaluation
+# app/models/__init__.py
+
 from app.models.user import User
-from app.models.user_profile import UserProfile
-from app.models.medication import Medication
-from app.models.emergency_contact import EmergencyContact
-from app.models.notification_preference import NotificationPreference
+from app.models.cardiovascular_risk import (
+    CardiovascularRiskProfile,
+    CardiovascularRiskHistory,
+)
+from app.models.medication import Medication, MedicationDoseLog
+from app.models.vital_record import VitalRecord
+from app.models.medical_alert import MedicalAlert
