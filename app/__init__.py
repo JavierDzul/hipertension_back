@@ -1,3 +1,4 @@
+import os
 from flask import Flask
 from flask_cors import CORS
 from app.config import Config
@@ -26,7 +27,19 @@ def create_app():
     db.init_app(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
-    CORS(app, origins=["http://localhost:5173"])
+    
+    
+    cors_origins = os.getenv("CORS_ORIGINS", "").split(",")
+
+    CORS(
+        app,
+        resources={
+            r"/api/*": {
+                "origins": cors_origins
+            }
+        },
+        supports_credentials=True,
+    )
 
     app.register_blueprint(risk_bp)
     app.register_blueprint(auth_bp)
